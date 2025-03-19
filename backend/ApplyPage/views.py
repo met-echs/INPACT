@@ -90,17 +90,6 @@ Return only the final score as a **number** between -1 and 100, without any expl
                     # Generate a random username and password
                     password = generate_credentials(name)
                     print(password)
-                    try:
-                        Candidate.objects.create(
-                            name=name,
-                            email=email,
-                            password=password,
-                            resume_score=score,
-                            resume_path=file_path,
-                            created_at=datetime.now()
-                        )
-                    except Exception as e:
-                        return JsonResponse({"error": "Candidate already exists. Please check your email ID and try again."}, status=500)
                     subject = "Your Account Details"
                     img_src = "https://img.freepik.com/free-vector/job-interview-conversation_74855-7566.jpg"
                     message = f"""
@@ -130,7 +119,18 @@ Return only the final score as a **number** between -1 and 100, without any expl
 
                     try:
                         send_mail(subject, '', from_email, recipient_list, html_message=message)
-                        return JsonResponse({"error": "Resume uploaded and email sent successfully"}, status=500)
+                        try:
+                            Candidate.objects.create(
+                            name=name,
+                            email=email,
+                            password=password,
+                            resume_score=score,
+                            resume_path=file_path,
+                            created_at=datetime.now()
+                            )
+                            return JsonResponse({"error": "Candidate already exists. Please check your email ID and try again."}, status=500)
+                        except Exception as e:
+                            return JsonResponse({"error": "Resume uploaded and email sent successfully"}, status=500)
                     except Exception as e:
                         print(f"Error sending email: {e}")
                         return JsonResponse({"error": "Failed to send Email."}, status=500)
