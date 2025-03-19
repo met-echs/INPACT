@@ -142,7 +142,7 @@ def login_view(request):
 
 def evaluate_answer(question_text, response_text, specific_area, keywords):
     print("evaluate_answer")
-    print(f"question:{question_text}")
+    # print(f"question:{question_text}")
     print(f"response:{response_text}")                                                      
     completion = client.chat.completions.create(
     model="gemma2-9b-it",
@@ -151,12 +151,12 @@ def evaluate_answer(question_text, response_text, specific_area, keywords):
     "content": """You are an interviewer tasked with evaluating a candidate's response to a question.
     The response is transcribed from voice and may contain minor inaccuracies. Your task is to assess the answer based on the following:
 
-    **Scoring Rules:**
+    *Scoring Rules:*
     1. If the answer is completely empty, irrelevant, or nonsensical, assign a score of 0.
     2. If the answer is mostly incorrect, irrelevant, or poorly structured, assign a score between 1 and 5, with 1 being barely coherent and 5 being partially correct.
     3. If the answer is mostly correct, relevant, and coherent, assign a score between 6 and 10, with 10 being perfectly accurate, logical, and fully addressing the question.
 
-    **Output Rules:**
+    *Output Rules:*
     - Provide only a numerical score (0-10). 
     - Do not include any text, explanations, or additional comments."""
         }, 
@@ -223,22 +223,23 @@ def start_transcription(request):
     response_data = {"status": "Recording started"}
     print(" I AM STARTING TRANSCRIPTION")
     return JsonResponse(response_data)
-
+import time
 @csrf_exempt
 def stop_transcription(request):
     """
     This view is called when the candidate stops transcription (either manually via a button or automatically).
     It:
+      - Stops the transcription process.
       - Retrieves the current question based on the provided question_number.
       - Retrieves the interview via the 'interview_id' GET parameter (or session as fallback).
       - Evaluates the candidate's response using evaluate_answer.
       - Saves the response (linked to the question and interview).
       - Determines the next question (if any) and returns its data.
     """
-    global response_text_accumulator
+    global is_transcribing, response_text_accumulator
 
     # Stop the transcription process
-    is_transcribing = False  # (if you use a global flag elsewhere, update accordingly)
+    is_transcribing = False
 
     # Get current question number from GET parameters
     current_question_number = request.GET.get('question_number')
@@ -260,18 +261,22 @@ def stop_transcription(request):
     except Interview.DoesNotExist:
         return JsonResponse({"error": "Interview record not found."}, status=404)
 
+    # Wait a short time to ensure any remaining transcription is processed
+    import time
+    time.sleep(1)  # Adjust the delay if necessary for synchronization
+
     # Evaluate the answer using your evaluate_answer function
     score = evaluate_answer(
-        question_text=question.question,       # Assuming the question text is stored in `question`
-        response_text=response_text_accumulator,
-        specific_area=question.specific_area,    # Adjust field names as needed
-        keywords=question.keywords               # Adjust field names as needed
+        question_text=question.question,
+        response_text=response_text_accumulator.strip(),
+        specific_area=question.specific_area,
+        keywords=question.keywords
     )
 
     # Save the response to the database
     response_obj = Response.objects.create(
         question=question,
-        response_text=response_text_accumulator,
+        response_text=response_text_accumulator.strip(),
         score=score,
         interview=interview
     )
@@ -285,7 +290,7 @@ def stop_transcription(request):
         next_question_number = None
         next_question_text = "No more questions."
 
-    # Optionally: Reset the accumulator for the next question
+    # Reset the accumulator for the next question
     response_text_accumulator = ""
 
     # Return the next question details as JSON
@@ -298,28 +303,39 @@ def stop_transcription(request):
 
 
 
+
 def live_transcribe(request):
     global is_transcribing, response_text_accumulator
-    print(" I AM LIVE TRANSCRIBING")
+    print("I AM LIVE TRANSCRIBING")
+
     if is_transcribing:
         try:
             with microphone as source:
-                print("Listening...")
-                audio = recognizer.listen(source)
-                print("Processing audio...")
-            try:
-                text = recognizer.recognize_google(audio)
-                print(f"Transcription: {text}")
-                response_text_accumulator += " " + text
-                return JsonResponse({"transcription": text})
-            except sr.UnknownValueError:
-                return JsonResponse({"error": "Could not understand audio"})
-            except sr.RequestError as e:
-                return JsonResponse({"error": f"Could not request results; {e}"})
+                while is_transcribing:
+                    print("Listening...")
+                    try:
+                        audio = recognizer.listen(source, timeout=2, phrase_time_limit=5)
+                        print("Processing audio...")
+
+                        # Recognize speech
+                        text = recognizer.recognize_google(audio)
+                        print(f"Transcription: {text}")
+                        response_text_accumulator += " " + text
+
+                    except sr.WaitTimeoutError:
+                        print("Listening timed out. No speech detected, continuing...")
+                    except sr.UnknownValueError:
+                        print("Could not understand the audio, retrying...")
+                    except sr.RequestError as e:
+                        return JsonResponse({"error": f"Could not request results; {e}"})
+
+            return JsonResponse({"transcription": response_text_accumulator})
+
         except OSError as e:
             return JsonResponse({"error": f"Microphone error: {e}"})
     else:
         return JsonResponse({"error": "Transcription is not active"})
+
 
 
 from django.http import JsonResponse
@@ -352,6 +368,3 @@ def no_questions_left(request):
             return JsonResponse({"error": "Interview not found"}, status=404)
 
     return JsonResponse({"error": "Invalid request"}, status=400)
-
-
-
