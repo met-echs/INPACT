@@ -18,7 +18,13 @@ class Question(models.Model):
     
     def __str__(self):
         return self.question_text
+from django.contrib.auth.hashers import make_password
 
 class Admin(models.Model):
     username = models.EmailField(unique=True, verbose_name="Email Address")
     password = models.CharField(max_length=255, verbose_name="Password")
+
+    def save(self, *args, **kwargs):
+        if not self.pk or Admin.objects.get(pk=self.pk).password != self.password:
+            self.password = make_password(self.password)
+        super().save(*args, **kwargs)
