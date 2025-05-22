@@ -20,7 +20,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-u$#e_!a+__q0h*ivye_evg37pj^(l)3j)0&@cquui!2g8-y-(='
+from decouple import config
+
+SECRET_KEY = config('SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
@@ -135,14 +137,18 @@ STATICFILES_DIRS = [
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+from decouple import config, Csv
 
-EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-EMAIL_HOST = 'smtp.gmail.com'  # Or your email provider's SMTP server
-EMAIL_PORT = 587
-EMAIL_USE_TLS = True
-EMAIL_HOST_USER = 'justforb26@gmail.com'
-EMAIL_HOST_PASSWORD = 'xnvhbvthwhgwnknq'
+EMAIL_BACKEND = config('EMAIL_BACKEND')
+EMAIL_HOST = config('EMAIL_HOST')
+EMAIL_PORT = config('EMAIL_PORT', cast=int)
+EMAIL_USE_TLS = config('EMAIL_USE_TLS', cast=bool)
+EMAIL_HOST_USER = config('EMAIL_HOST_USER')
+EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD')
 
-GROQ_API_KEY = "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"
-DEEPGRAM_API_KEY = "2b12456b65a6cdf46167b2674339cc78e99bd927"
+from decouple import config
+
+GROQ_API_KEY = config('GROQ_API_KEY')
+DEEPGRAM_API_KEY = config('DEEPGRAM_API_KEY')
+
 
