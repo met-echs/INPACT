@@ -1,26 +1,38 @@
 from django.shortcuts import render, redirect, get_object_or_404
+from django.conf import settings
 from ApplyPage.models import Candidate
 from .forms import LoginForm
 from django.contrib import messages
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.core.mail import EmailMessage
-from backend.settings import DEEPGRAM_API_KEY
-from backend.settings import GROQ_API_KEY
 from groq import Groq
+from django.contrib.auth.hashers import check_password as _check_password
 import speech_recognition as sr
-from dashboard.models import Question , EvaluationCriteria # Ensure the Response model is imported
-from .models import Response , Interview
-from django.core.exceptions import ObjectDoesNotExist
+from dashboard.models import Question, EvaluationCriteria
+from .models import Response, Interview
 from django.urls import reverse
-client = Groq(api_key=GROQ_API_KEY)
 
+client = Groq(api_key=settings.GROQ_API_KEY)
+
+# Shared speech recognizer instance (stateless — safe to share)
 recognizer = sr.Recognizer()
-microphone = sr.Microphone()
+
+# Guard microphone initialization — sr.Microphone() fails on headless servers
+try:
+    microphone = sr.Microphone()
+except OSError:
+    microphone = None
+    import logging
+    logging.getLogger(__name__).warning(
+        "No audio input device found. Live transcription via server mic is disabled."
+    )
+
+# NOTE: The following globals are intentionally kept for backwards compatibility
+# with the existing single-user dev setup, but MUST be replaced with session/DB
+# storage before deploying to production with concurrent users.
 is_transcribing = False
 response_text_accumulator = ""
-current_question_id = 0
-global_user = None
 
 def upload_recording(request):
     print("i am waked")
@@ -119,23 +131,32 @@ def interview_test(request):
     return render(request, 'interview/interview_test.html', {"interview_id": interview_id})
 @csrf_exempt
 def login_view(request):
+    """
+    Candidate login view.
+
+    Authenticates using the Candidate model. Passwords are verified via
+    check_password() against the stored PBKDF2 hash — plaintext is never
+    compared directly.
+    """
     if request.method == 'POST':
         form = LoginForm(request.POST)
         if form.is_valid():
             username = form.cleaned_data['username']
             password = form.cleaned_data['password']
             try:
-                user = Candidate.objects.get(email=username, password=password)
-                # Store user ID in session
-                request.session['candidate_name'] = user.name
-                request.session['candidate_id'] = user.pk
-                # messages.success(request, "Login successful!")
-                return render(request, 'interview/interview_home.html', {'name': user.name})
+                user = Candidate.objects.get(email=username)
+                if _check_password(password, user.password):
+                    # Store candidate identity in session
+                    request.session['candidate_name'] = user.name
+                    request.session['candidate_id'] = user.pk
+                    return render(request, 'interview/interview_home.html', {'name': user.name})
+                else:
+                    messages.error(request, "Invalid username or password.")
             except Candidate.DoesNotExist:
                 messages.error(request, "Invalid username or password.")
         else:
             messages.error(request, "Invalid form data.")
-        return redirect('login')  # Redirect to avoid resubmission
+        return redirect('login')
     else:
         form = LoginForm()
     return render(request, 'interview/Login.html', {'form': form})
@@ -305,29 +326,36 @@ def stop_transcription(request):
 
 
 def live_transcribe(request):
+    """
+    Server-side live transcription endpoint.
+
+    WARNING: This approach uses the server's physical microphone and is only
+    functional in a local single-user development setup. In production,
+    transcription should be performed client-side (e.g. Web Speech API or
+    Deepgram via WebSocket) and the transcribed text POSTed to the server.
+    """
     global is_transcribing, response_text_accumulator
-    print("I AM LIVE TRANSCRIBING")
+
+    if microphone is None:
+        return JsonResponse(
+            {"error": "Server-side microphone not available. Use client-side transcription."},
+            status=503,
+        )
 
     if is_transcribing:
         try:
             with microphone as source:
                 while is_transcribing:
-                    print("Listening...")
                     try:
                         audio = recognizer.listen(source, timeout=2, phrase_time_limit=5)
-                        print("Processing audio...")
-
-                        # Recognize speech
                         text = recognizer.recognize_google(audio)
-                        print(f"Transcription: {text}")
                         response_text_accumulator += " " + text
-
                     except sr.WaitTimeoutError:
-                        print("Listening timed out. No speech detected, continuing...")
+                        pass  # No speech in window — continue listening
                     except sr.UnknownValueError:
-                        print("Could not understand the audio, retrying...")
+                        pass  # Audio unclear — continue listening
                     except sr.RequestError as e:
-                        return JsonResponse({"error": f"Could not request results; {e}"})
+                        return JsonResponse({"error": f"Speech recognition service error: {e}"})
 
             return JsonResponse({"transcription": response_text_accumulator})
 

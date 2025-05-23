@@ -91,27 +91,40 @@ def high_scores(request):
     return render(request, 'dashboard/rank.html', {'candidates': candidates})
 
 from .forms import LoginForm
-from django.contrib.auth import authenticate, login
+from django.contrib.auth.hashers import check_password as _check_password
 from .models import Admin
+
 def login_page(request):
+    """
+    Admin login view.
+
+    Authenticates against the custom Admin model using Django's password
+    hasher (PBKDF2). Credentials are verified via check_password() so
+    plaintext is never compared directly against the stored hash.
+    """
     if request.method == 'POST':
         form = LoginForm(request.POST)
         if form.is_valid():
             username = form.cleaned_data['username']
             password = form.cleaned_data['password']
             try:
-                admin = Admin.objects.get(username=username, password=password)
-                # Store user ID in session
-                messages.success(request, "Login successful!")
-                return redirect( 'high_scores')
+                admin = Admin.objects.get(username=username)
+                if _check_password(password, admin.password):
+                    request.session['admin_logged_in'] = True
+                    request.session['admin_username'] = username
+                    messages.success(request, "Login successful!")
+                    return redirect('high_scores')
+                else:
+                    messages.error(request, "Invalid username or password.")
             except Admin.DoesNotExist:
                 messages.error(request, "Invalid username or password.")
         else:
             messages.error(request, "Invalid form data.")
-        return redirect('admin_login')  # Redirect to avoid resubmission
+        return redirect('admin_login')
     else:
         form = LoginForm()
     return render(request, 'dashboard/Login.html', {'form': form})
+
 from Interview.models import Interview
 def candidate_detail(request, candidate_id):
     candidate = get_object_or_404(Candidate, pk=candidate_id)
